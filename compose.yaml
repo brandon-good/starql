@@ -1,0 +1,53 @@
+services:
+  # app:
+  #   container_name: starql
+  #   image: starql:latest
+  #   env_file:
+  #     - .env
+  #     - app.env
+  # db:
+  #   container_name: postgres
+  #   image: postgres
+  #   environment:
+  #     PGDATA: /data/postgres
+  #     POSTGRES_DB: bank
+  #   env_file:
+  #     - .env
+  #   volumes:
+  #     - db:/data/postgres
+  #   ports:
+  #     - "5332:5432"
+  #   # networks:
+  #   #   - db
+  #   restart: unless-stopped
+  #   healthcheck:
+  #     test: [ "CMD-SHELL", "pg_isready -d postgres" ]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 5
+  # adminer:
+  #   image: adminer
+  #   restart: always
+  #   ports:
+  #     - 8080:8080
+  ollama:
+    image: docker.io/ollama/ollama:latest
+    ports:
+      - 7869:11434
+    volumes:
+      - ~/.ollama:/root/.ollama
+    container_name: ollama
+    pull_policy: always
+    tty: true
+    restart: always
+    environment:
+      - OLLAMA_KEEP_ALIVE=24h
+      - OLLAMA_HOST=0.0.0.0
+  # networks:
+
+  #   - ollama-docker
+  # networks:
+  #   db:
+  #     driver: bridge
+volumes:
+  db:
