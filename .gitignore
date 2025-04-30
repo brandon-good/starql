@@ -33,3 +33,4 @@ dev_20240627
 minidev
 *sqlite
 .DS_Store
+results/*jsonl

@@ -3,7 +3,9 @@ package llm
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
@@ -35,11 +37,12 @@ type Results struct {
 }
 
 type DbHandler struct {
-	Responses chan Response
-	Host      string
-	Port      int
-	User      string
-	Password  string
+	Responses   chan Response
+	Host        string
+	Port        int
+	User        string
+	Password    string
+	resultsFile string
 }
 
 func NewPgConfig(host string, port int, user string, password string, dbfile string) *PgConfig {
@@ -53,11 +56,12 @@ func NewPgConfig(host string, port int, user string, password string, dbfile str
 }
 func RunDbDaemon(ctx context.Context, resps chan Response, port int, host, user, password string, numWorkers int, wg *sync.WaitGroup) {
 	hdlr := &DbHandler{
-		Responses: resps,
-		Host:      host,
-		Port:      port,
-		User:      user,
-		Password:  password,
+		Responses:   resps,
+		Host:        host,
+		Port:        port,
+		User:        user,
+		Password:    password,
+		resultsFile: fmt.Sprintf("/results/%d_correct.jsonl", time.Now().Unix()),
 	}
 
 	for range numWorkers {
@@ -79,6 +83,24 @@ func (h *DbHandler) Handle(ctx context.Context, wg *sync.WaitGroup) {
 			}
 
 			log.Info().Int("qid", req.birdQ.Id).Bool("result", result).Msg("sql comparison result")
+			if result {
+				f, err := os.OpenFile(h.resultsFile,
+					os.O_APPEND|os.O_CREATE|os.O_WRONLY,
+					0644,
+				)
+				if err != nil {
+					log.Panic().Err(err).Msg("error opening file")
+				}
+				defer f.Close()
+				bq, err := json.Marshal(req.birdQ)
+				if err != nil {
+					log.Panic().Err(err).Msg("error marshalling question")
+				}
+
+				if _, err := f.Write(append(bq, '\n')); err != nil {
+					log.Panic().Err(err).Msg("error writing to answers file")
+				}
+			}
 		case <-time.After(30 * time.Second):
 			wg.Done()
 		}

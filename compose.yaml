@@ -5,6 +5,7 @@ services:
     volumes:
       - ./logs:/logs
       - ./data:/data
+      - ./results:/results
     env_file:
       - app.env
     network_mode: host
