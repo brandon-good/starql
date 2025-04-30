@@ -34,3 +34,4 @@ minidev
 *sqlite
 .DS_Store
 results/*jsonl
+app.env

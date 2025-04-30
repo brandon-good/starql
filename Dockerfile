@@ -14,6 +14,7 @@ COPY . .
 RUN CGO_ENABLED=1 go build -o myapp .
 
 COPY shuffled_mini_dev_postgresql.jsonl .
+COPY shuffled_train.jsonl .
 # Copy the application executable from the build image
 
 

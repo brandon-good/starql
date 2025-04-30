@@ -15,12 +15,12 @@ import (
 )
 
 type BirdQuestion struct {
-	Id         int    `json:"question_id"`
+	Id         int    `json:"question_id,omitempty"`
 	DbId       string `json:"db_id"`
 	Question   string `json:"question"`
 	Evidence   string `json:"evidence"`
 	SQL        string `json:"sql"`
-	Difficulty string `json:"difficulty"`
+	Difficulty string `json:"difficulty,omitempty"`
 }
 
 type PgConfig struct {
