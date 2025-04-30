@@ -50,7 +50,7 @@ func main() {
 	}
 	defer file.Close()
 
-	numWorkers := 10
+	numWorkers := 5
 	reqs := make(chan llm.Request, numWorkers)
 	resps := make(chan llm.Response, numWorkers)
 	ctx := context.Background()

@@ -34,13 +34,15 @@ type OllamaResponseContent struct {
 }
 
 type Response struct {
-	Resp  OllamaResponseContent `json:"ollama_response"`
-	BirdQ BirdQuestion          `json:"bird_question"`
+	Resp      OllamaResponseContent `json:"ollama_response"`
+	BirdQ     BirdQuestion          `json:"bird_question"`
+	FullQuery string                `json:"full_query"`
 }
 
 type Request struct {
-	req   OllamaRequest
-	birdQ BirdQuestion
+	req       OllamaRequest
+	birdQ     BirdQuestion
+	fullQuery string
 }
 
 type OllamaRequestsHandler struct {
@@ -73,17 +75,19 @@ func (h *OllamaRequestsHandler) Request(question BirdQuestion) {
 	schemas := getSchemas(question.DbId)
 
 	// TODO open that DB, get the schema, and add it to the request
+	content := fmt.Sprintf("Given the following Database Schema, convert the Question into SQL and provide your Rationale for why that SQL is correct.\n\nDatabase Schema:\n%s\n\nQuestion:\n%s", schemas, question.Question)
 	req := OllamaRequest{
 		Model:    h.Model,
-		Messages: []OllamaMessage{{Role: "user", Content: fmt.Sprintf("Given the following Database Schema, convert the Question into SQL and provide your Rationale for why that SQL is correct.\n\nDatabase Schema:\n%s\n\nQuestion:\n%s", schemas, question.Question)}},
+		Messages: []OllamaMessage{{Role: "user", Content: content}},
 		Format:   format,
 	}
 
 	log.Debug().Any("messages to llm", req.Messages).Msg("pushing request onto queue")
 
 	request := Request{
-		req:   req,
-		birdQ: question,
+		req:       req,
+		birdQ:     question,
+		fullQuery: content,
 	}
 
 	h.Requests <- request
@@ -140,8 +144,9 @@ func requestWorker(ctx context.Context, hdlr *OllamaRequestsHandler, wg *sync.Wa
 				content := &OllamaResponseContent{}
 				json.Unmarshal([]byte(ollamaResponse.Message.Content), content)
 				response := Response{
-					Resp:  *content,
-					BirdQ: req.birdQ,
+					Resp:      *content,
+					BirdQ:     req.birdQ,
+					FullQuery: req.fullQuery,
 				}
 				hdlr.Responses <- response
 			} else {
