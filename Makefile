@@ -1,2 +1,4 @@
 build:
-	docker build -t starql .
+	docker build -f Dockerfile -t starql .
+build-pg:
+	docker build -f minidev_pgsql.Dockerfile -t starql-db .

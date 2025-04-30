@@ -1,32 +1,82 @@
 package main
 
 import (
+	"bufio"
+	"context"
+	"encoding/json"
 	"fmt"
+	"os"
+	"sync"
+	"time"
 
+	"github.com/brandon-good/starql.git/llm"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/viper"
 )
 
 type AppConfig struct {
-	DbUrl    string // database to query
-	TestSize int    // n questions to ask the model
-	LlmApi   string
-	
+	TestSize     int // n questions to ask the model
+	LlmApi       string
+	Llm          string // model to use
+	QuestionFile string // file with questions
+}
+
+func (cfg *AppConfig) setupLogger() {
+	logFileName := "/logs/logs_" + fmt.Sprintf("%s_%d", cfg.Llm, time.Now().Unix()) + ".log"
+
+	logFile, err := os.Create(logFileName)
+	if err != nil {
+		log.Panic().Err(err).Msg("Failed to create log file")
+	}
+
+	log.Logger = log.Output(logFile)
 }
 
 func main() {
+
+	var requestsGroup sync.WaitGroup
+	var resultsGroup sync.WaitGroup
 	cfg, err := NewAppConfig()
 	if err != nil {
 		log.Panic().Err(err).Send()
 	}
+	cfg.setupLogger()
 
-	fmt.Printf("%+v", cfg)
+	log.Info().Any("cfg", cfg).Send()
 
+	file, err := os.Open(cfg.QuestionFile)
+	if err != nil {
+		log.Panic().Err(err).Send()
+	}
+	defer file.Close()
+
+	numWorkers := 10
+	reqs := make(chan llm.Request, numWorkers)
+	resps := make(chan llm.Response, numWorkers)
+	ctx := context.Background()
+	llmHdlr := llm.NewOllamaRequestsHandler(ctx, cfg.Llm, cfg.LlmApi, reqs, resps, numWorkers, &requestsGroup)
+
+	llm.RunDbDaemon(ctx, resps, 5332, "localhost", viper.GetString("POSTGRES_USER"), viper.GetString("POSTGRES_PASSWORD"), numWorkers, &resultsGroup)
+
+	scanner := bufio.NewScanner(file)
+	for range cfg.TestSize {
+		scanner.Scan()
+		line := scanner.Text()
+		var record llm.BirdQuestion
+		err = json.Unmarshal([]byte(line), &record)
+		log.Info().Any("record", record).Send()
+		llmHdlr.Request(record)
+	}
+
+	resultsGroup.Wait()
+	requestsGroup.Wait()
+	close(reqs)
+	close(resps)
 }
 
 func NewAppConfig() (*AppConfig, error) {
 	viper.AutomaticEnv()
 	return &AppConfig{
-		TestSize: viper.GetInt("TEST_SIZE"), DbUrl: viper.GetString("DB_URL"), LlmApi: viper.GetString("LLM_API"),
+		TestSize: viper.GetInt("TEST_SIZE"), LlmApi: viper.GetString("LLM_API"), Llm: viper.GetString("LLM"), QuestionFile: viper.GetString("QUESTION_FILE"),
 	}, nil
 }

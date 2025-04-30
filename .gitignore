@@ -28,3 +28,8 @@ my.env
 
 #db
 dev_20240627
+
+*.log
+minidev
+*sqlite
+.DS_Store

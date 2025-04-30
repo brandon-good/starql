@@ -11,9 +11,9 @@ RUN go mod download
 
 COPY . .
 
-RUN go build -o myapp .
+RUN CGO_ENABLED=1 go build -o myapp .
 
-
+COPY shuffled_mini_dev_postgresql.jsonl .
 # Copy the application executable from the build image
 
 
