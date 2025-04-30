@@ -34,8 +34,8 @@ type OllamaResponseContent struct {
 }
 
 type Response struct {
-	resp  OllamaResponseContent
-	birdQ BirdQuestion
+	Resp  OllamaResponseContent `json:"ollama_response"`
+	BirdQ BirdQuestion          `json:"bird_question"`
 }
 
 type Request struct {
@@ -140,8 +140,8 @@ func requestWorker(ctx context.Context, hdlr *OllamaRequestsHandler, wg *sync.Wa
 				content := &OllamaResponseContent{}
 				json.Unmarshal([]byte(ollamaResponse.Message.Content), content)
 				response := Response{
-					resp:  *content,
-					birdQ: req.birdQ,
+					Resp:  *content,
+					BirdQ: req.birdQ,
 				}
 				hdlr.Responses <- response
 			} else {
