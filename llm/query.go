@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
-	"time"
 
 	"github.com/go-resty/resty/v2"
 	"github.com/rs/zerolog/log"
@@ -35,13 +34,16 @@ type OllamaResponseContent struct {
 
 type Response struct {
 	Resp      OllamaResponseContent `json:"ollama_response"`
-	BirdQ     BirdQuestion          `json:"bird_question"`
-	FullQuery string                `json:"full_query"`
+	Messages  []OllamaMessage       `json:"messages"`
+	Schema    string
+	BirdQ     BirdQuestion `json:"bird_question"`
+	FullQuery string       `json:"full_query"`
 }
 
 type Request struct {
 	req       OllamaRequest
 	birdQ     BirdQuestion
+	schema    string
 	fullQuery string
 }
 
@@ -78,7 +80,7 @@ func (h *OllamaRequestsHandler) Request(question BirdQuestion) {
 	content := fmt.Sprintf("Given the following Database Schema, convert the Question into SQL and provide your Rationale for why that SQL is correct.\n\nDatabase Schema:\n%s\n\nQuestion:\n%s", schemas, question.Question)
 	req := OllamaRequest{
 		Model:    h.Model,
-		Messages: []OllamaMessage{{Role: "user", Content: content}},
+		Messages: []OllamaMessage{{Role: "system", Content: SysPrompt}, {Role: "user", Content: content}},
 		Format:   format,
 	}
 
@@ -88,9 +90,42 @@ func (h *OllamaRequestsHandler) Request(question BirdQuestion) {
 		req:       req,
 		birdQ:     question,
 		fullQuery: content,
+		schema:    schemas,
 	}
 
 	h.Requests <- request
+}
+
+func (h *OllamaRequestsHandler) RequestRationaleForSql(question BirdQuestion) {
+
+	schemas := getSchemas(question.DbId)
+	// TODO open that DB, get the schema, and add it to the request
+	sys := "You will be given a Database Schema, Question, and the correct SQL answer. Your task is to provide a Rationale as to why the SQL answer is correct. Repeat the SQL back to me exactly as I provide it."
+	content := fmt.Sprintf(`Database Schema:
+	%s
+	
+	Question:
+	%s
+	
+	Correct SQL Answer:
+	%s`, schemas, question.Question, question.SQL)
+	req := OllamaRequest{
+		Model:    h.Model,
+		Messages: []OllamaMessage{{Role: "system", Content: sys}, {Role: "user", Content: content}},
+		Format:   format,
+	}
+
+	log.Debug().Any("messages to llm", req.Messages).Msg("Requesting rationale provided correct SQL ")
+
+	request := Request{
+		req:       req,
+		birdQ:     question,
+		fullQuery: content,
+		schema:    schemas,
+	}
+
+	go func() { h.Requests <- request }()
+
 }
 
 func (h *OllamaRequestsHandler) SyncRequest(role, prompt string) (string, error) {
@@ -123,15 +158,10 @@ func (h *OllamaRequestsHandler) SyncRequest(role, prompt string) (string, error)
 
 func requestWorker(ctx context.Context, hdlr *OllamaRequestsHandler, wg *sync.WaitGroup) {
 	log.Debug().Msg("request worker created")
+	defer wg.Done()
 	for {
 		select {
 		case req := <-hdlr.Requests:
-			// log.Debug().Any("request", req.birdQ).Msg("request received")
-
-			// log.Debug().Any("hdlr", hdlr.Api).Send()
-			// log.Debug().Any("hdlr", hdlr.Model).Send()
-			// log.Debug().Any("req", req.req).Send()
-
 			client := resty.New()
 			ollamaResponse := &OllamaResponse{}
 			resp, err := client.R().
@@ -143,10 +173,15 @@ func requestWorker(ctx context.Context, hdlr *OllamaRequestsHandler, wg *sync.Wa
 				log.Debug().Any("ollama content", ollamaResponse.Message.Content).Send()
 				content := &OllamaResponseContent{}
 				json.Unmarshal([]byte(ollamaResponse.Message.Content), content)
+				if req.schema == "" {
+					panic("schema is empty")
+				}
 				response := Response{
 					Resp:      *content,
+					Messages:  append(req.req.Messages, ollamaResponse.Message),
 					BirdQ:     req.birdQ,
 					FullQuery: req.fullQuery,
+					Schema:    req.schema,
 				}
 				hdlr.Responses <- response
 			} else {
@@ -156,10 +191,6 @@ func requestWorker(ctx context.Context, hdlr *OllamaRequestsHandler, wg *sync.Wa
 				log.Error().Err(err).Msg("issue posting to ollama.")
 			}
 
-		case <-time.After(30 * time.Second):
-			log.Debug().Msg("request worker timed out")
-			wg.Done()
-			break
 		}
 	}
 }

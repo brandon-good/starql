@@ -6,7 +6,6 @@ services:
       - ./logs:/logs
       - ./data:/data
       - ./results:/results
-      - ./shuffled_train.jsonl:/app/shuffled_mini_dev_postgresql.jsonl
     env_file:
       - app.env
     network_mode: host

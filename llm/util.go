@@ -10,9 +10,7 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-const SysPrompt = `You are an expert SQL query generator. Your task is to convert natural language questions into accurate, efficient SQL queries based on the provided PostgreSQL database schema. You will be provided with a database schema for every question. Follow these guidelines:
-Only use the tables, columns, and relationships explicitly defined in the schema.
-Use proper SQL syntax for PostgreSQL (e.g., ILIKE for case-insensitive matches, LIMIT for result size).`
+const SysPrompt = "You are an expert SQL query generator. Your task is to convert natural language questions into accurate, efficient SQL queries based on the provided SQLite database schema and provide a rationale as to why your answer is correct. You will be provided with a database schema for every question. Only use the tables, columns, and relationships explicitly defined in the schema."
 
 func getSchemas(dbId string) string {
 	db, err := sql.Open("sqlite3", fmt.Sprintf("/data/%s.sqlite", dbId))
@@ -52,7 +50,6 @@ func compareRows(goldRows, llmRows *sql.Rows) (bool, error) {
 }
 
 func rowsToMaps(rows *sql.Rows) ([]map[string]any, error) {
-	defer rows.Close()
 
 	cols, err := rows.Columns()
 	if err != nil {

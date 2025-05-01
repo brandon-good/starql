@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"sync"
@@ -28,7 +29,6 @@ type PgConfig struct {
 	Port     int
 	User     string
 	Password string
-	DbFile   string
 }
 
 type Results struct {
@@ -37,61 +37,80 @@ type Results struct {
 }
 
 type DbHandler struct {
-	Responses      chan Response
-	Host           string
-	Port           int
-	User           string
-	Password       string
-	resultsFile    string
-	fineTuningFile string
+	Responses       chan Response
+	Host            string
+	Port            int
+	User            string
+	Password        string
+	resultsFile     string
+	fineTuningFile  string
+	CorrectTheModel bool
 }
 
-func NewPgConfig(host string, port int, user string, password string, dbfile string) *PgConfig {
+func NewPgConfig(host string, port int, user string, password string) *PgConfig {
 	return &PgConfig{
 		Host:     host,
 		Port:     port,
 		User:     user,
 		Password: password,
-		DbFile:   dbfile,
 	}
 }
-func RunDbDaemon(ctx context.Context, resps chan Response, port int, host, user, password string, numWorkers int, wg *sync.WaitGroup) {
+func RunDbDaemon(ctx context.Context, resps chan Response, port int, host, user, password string, llm *OllamaRequestsHandler, numWorkers int, wg *sync.WaitGroup, correctModel bool) {
 	t := time.Now().Unix()
 	hdlr := &DbHandler{
-		Responses:      resps,
-		Host:           host,
-		Port:           port,
-		User:           user,
-		Password:       password,
-		resultsFile:    fmt.Sprintf("/results/%d_correct_birdq.jsonl", t),
-		fineTuningFile: fmt.Sprintf("/results/%d_finetuning.jsonl", t),
+		Responses:       resps,
+		Host:            host,
+		Port:            port,
+		User:            user,
+		Password:        password,
+		resultsFile:     fmt.Sprintf("/results/%d_correct_birdq.jsonl", t),
+		fineTuningFile:  fmt.Sprintf("/results/%d_finetuning.jsonl", t),
+		CorrectTheModel: correctModel,
 	}
 
 	for range numWorkers {
 		wg.Add(1)
-		go hdlr.Handle(ctx, wg)
+		go hdlr.Handle(ctx, llm, wg)
 	}
 }
 
-func (h *DbHandler) Handle(ctx context.Context, wg *sync.WaitGroup) {
+type goldQueryError struct{}
+
+func (h *DbHandler) Handle(ctx context.Context, llm *OllamaRequestsHandler, wg *sync.WaitGroup) {
+	defer wg.Done()
 	for {
 
 		select {
-		case req := <-h.Responses:
-			cfg := NewPgConfig(h.Host, h.Port, h.User, h.Password, "bank")
-			result, err := cfg.Request(ctx, req.Resp.LlmSql, req.BirdQ.SQL, req.BirdQ.DbId)
+		case resp := <-h.Responses:
+			cfg := NewPgConfig(h.Host, h.Port, h.User, h.Password)
+			result, err := cfg.Request(ctx, resp.Resp.LlmSql, resp.BirdQ.SQL, resp.BirdQ.DbId)
 
 			if err != nil {
 				log.Error().Err(err).Msg("error comparing sql results")
+				var myErr *goldQueryError
+				if errors.As(err, &myErr) {
+					return
+				}
 			}
-
-			log.Info().Int("qid", req.BirdQ.Id).Bool("result", result).Msg("sql comparison result")
+			log.Info().Int("qid", resp.BirdQ.Id).Bool("result", result).Msg("sql comparison result")
 			if result {
-				save(h, h.resultsFile, req.BirdQ)
-				save(h, h.fineTuningFile, req)
+				save(h, h.resultsFile, resp.BirdQ)
+
+				resp.Messages[0] = OllamaMessage{
+					Role:    "system",
+					Content: SysPrompt,
+				}
+				content := fmt.Sprintf("Given the following Database Schema, convert the Question into SQL and provide your Rationale for why that SQL is correct.\n\nDatabase Schema:\n%s\n\nQuestion:\n%s", resp.Schema, resp.BirdQ.Question)
+
+				resp.Messages[1] = OllamaMessage{
+					Role:    "user",
+					Content: content,
+				}
+
+				save(h, h.fineTuningFile, resp.Messages)
+			} else if h.CorrectTheModel {
+				llm.RequestRationaleForSql(resp.BirdQ)
 			}
-		case <-time.After(30 * time.Second):
-			wg.Done()
 		}
 
 	}
@@ -114,6 +133,10 @@ func save(h *DbHandler, filename string, req any) {
 	if _, err := f.Write(append(bq, '\n')); err != nil {
 		log.Panic().Err(err).Msg("error writing to answers file")
 	}
+}
+
+func (m *goldQueryError) Error() string {
+	return "the gold query is bad :("
 }
 
 func (p *PgConfig) Request(ctx context.Context, llmQuery, goldQuery, dbId string) (bool, error) {
@@ -149,7 +172,7 @@ func (p *PgConfig) Request(ctx context.Context, llmQuery, goldQuery, dbId string
 	}()
 	if err != nil {
 		log.Error().Err(err).Msg("goldQuery failed to query the database")
-		return false, err
+		return false, &goldQueryError{}
 	}
 
 	result, err := compareRows(goldRows, llmRows)
