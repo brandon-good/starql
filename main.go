@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/brandon-good/starql.git/llm"
+	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/viper"
 )
@@ -29,7 +30,7 @@ func (cfg *AppConfig) setupLogger() {
 		log.Panic().Err(err).Msg("Failed to create log file")
 	}
 
-	log.Logger = log.Output(logFile)
+	log.Logger = log.Output(zerolog.MultiLevelWriter(logFile, os.Stdout))
 }
 
 func main() {
@@ -50,13 +51,13 @@ func main() {
 	}
 	defer file.Close()
 
-	numWorkers := 5
-	reqs := make(chan llm.Request, numWorkers)
-	resps := make(chan llm.Response, numWorkers)
+	numWorkers := viper.GetInt("STARQL_NUMWORKERS")
+	reqs := make(chan llm.Request, numWorkers*2)
+	resps := make(chan llm.Response, numWorkers*2)
 	ctx := context.Background()
 	llmHdlr := llm.NewOllamaRequestsHandler(ctx, cfg.Llm, cfg.LlmApi, reqs, resps, numWorkers, &requestsGroup)
 
-	llm.RunDbDaemon(ctx, resps, 5332, "localhost", viper.GetString("POSTGRES_USER"), viper.GetString("POSTGRES_PASSWORD"), numWorkers, &resultsGroup)
+	llm.RunDbDaemon(ctx, resps, 5332, "localhost", viper.GetString("POSTGRES_USER"), viper.GetString("POSTGRES_PASSWORD"), llmHdlr, numWorkers, &resultsGroup, viper.GetBool("CORRECT_MODEL"))
 
 	scanner := bufio.NewScanner(file)
 	for range cfg.TestSize {
